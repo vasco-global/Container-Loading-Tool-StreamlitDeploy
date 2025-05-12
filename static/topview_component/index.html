@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Topview Component</title>
+    <style>
+      html, body {
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+        border-radius: 20px;
+      }
+      #canvas-container {
+        width: 100%;
+        height: 100%;
+      }
+    </style>
+    <script type="importmap">
+      {
+        "imports": {
+          "react": "https://esm.sh/react@18.2.0?target=esnext",
+          "react-dom": "https://esm.sh/react-dom@18.2.0?target=esnext",
+          "hoist-non-react-statics": "https://esm.sh/hoist-non-react-statics@3.3.2",
+          "apache-arrow": "https://esm.sh/apache-arrow@8.0.0",
+          "streamlit-component-lib": "https://unpkg.com/streamlit-component-lib@2.0.0/dist/index.js"
+        }
+      }
+    </script>
+  </head>
+  <body>
+  <script type="module">
+    import * as THREE from "https://unpkg.com/three@0.169.0/build/three.module.js";
+    import { Streamlit } from "https://unpkg.com/streamlit-component-lib@2.0.0/dist/index.js";
+
+    Streamlit.setComponentReady();
+
+    Streamlit.events.addEventListener(Streamlit.RENDER_EVENT, (event) => {
+      const params = event.detail.args;
+      const containers = params.containers;
+      const container_dims = params.container_dims;
+      const scale = params.scale;
+      const refresh = params.refreshTopview;
+
+      if (refresh === false) return;
+
+      const aspect = container_dims.length / container_dims.width;
+      const canvasContainer = document.getElementById("canvas-container");
+      const canvasWidth = canvasContainer.clientWidth || 800;
+      const canvasHeight = canvasWidth * aspect;
+      canvasContainer.style.height = canvasHeight + "px";
+
+      const renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(canvasWidth, canvasHeight);
+      canvasContainer.innerHTML = "";
+      canvasContainer.appendChild(renderer.domElement);
+
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x0e1117);
+      scene.add(new THREE.AmbientLight(0x777777));
+      const directionalLight = new THREE.DirectionalLight(0xffffff, 0.6);
+      directionalLight.position.set(3, 5, 1);
+      scene.add(directionalLight);
+
+      const containerImages = [];
+      const sideImages = [];
+
+      const gap_m = 1.5;
+      const gap_px = gap_m * scale;
+      const containerPositions = [];
+      for (let i = 0; i < containers.length; i++) {
+        const offset_x = i * (container_dims.width * scale + gap_px);
+        containerPositions.push(offset_x);
+      }
+
+      for (let i = 0; i < containers.length; i++) {
+        const group = new THREE.Group();
+        const offsetZ = i * ((container_dims.length * scale) + gap_px);
+
+        /* ---------- Top-Camera ---------- */
+        const camTop = new THREE.OrthographicCamera(
+          -container_dims.width * scale / 2,
+           container_dims.width * scale / 2,
+           container_dims.length * scale / 2,
+          -container_dims.length * scale / 2,
+          1, 10000
+        );
+        camTop.position.set(
+          container_dims.width * scale / 2,
+          container_dims.height * scale + 500,
+          offsetZ + container_dims.length * scale / 2
+        );
+        camTop.lookAt(
+          new THREE.Vector3(
+            container_dims.width * scale / 2, 0,
+            offsetZ + container_dims.length * scale / 2
+          )
+        );
+
+
+          const camSide = new THREE.OrthographicCamera(
+            -container_dims.length * scale / 2,
+             container_dims.length * scale / 2,
+             container_dims.height * scale / 2,
+            -container_dims.height * scale / 2,
+             1, 10000
+          );
+          camSide.position.set(
+            container_dims.width * scale + 500,
+            container_dims.height * scale / 2,
+            offsetZ + container_dims.length * scale / 2
+          );
+          camSide.lookAt(
+            container_dims.width * scale / 2,
+            container_dims.height * scale / 2,
+            offsetZ + container_dims.length * scale / 2
+          );
+
+
+
+
+        const containerGeometry = new THREE.BoxGeometry(
+          container_dims.width * scale,
+          container_dims.height * scale,
+          container_dims.length * scale
+        );
+        const containerMaterial = new THREE.MeshBasicMaterial({
+          color: 0x808080,
+          opacity: 0.3,
+          transparent: true
+        });
+        const containerMesh = new THREE.Mesh(containerGeometry, containerMaterial);
+        containerMesh.position.set(
+          (container_dims.width * scale) / 2,
+          (container_dims.height * scale) / 2,
+          offsetZ + (container_dims.length * scale) / 2
+        );
+        group.add(containerMesh);
+
+        if (containers[i].boxes && containers[i].boxes.length > 0) {
+          containers[i].boxes.forEach((box) => {
+            const pos = box.position;
+            const dims = box.placed_dims;
+            const cx = (pos[0] + dims[0] / 2) * scale;
+            const cz = (pos[1] + dims[1] / 2) * scale + offsetZ;
+
+            const cy = (
+              pos[2] +
+              (box.flat
+                  ? box.height_3d / 2
+                  : box.isOval
+                      ? box.ovalHeight / 2
+                      : box.rollDiameter / 2
+              )
+            ) * scale;
+
+            let beltMesh;
+
+            if (box.flat) {
+              const g = new THREE.CylinderGeometry(
+                (box.rollDiameter / 2) * scale,
+                (box.rollDiameter / 2) * scale,
+                box.height_3d * scale,
+                32
+              );
+              beltMesh = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: box.color || 0xff0000 }));
+              beltMesh.rotation.z = 0;
+              beltMesh.rotation.y = 0;
+            }
+
+            else if (box.isOval) {
+              const radialSegments = 32;
+              const cylHeight = box.belt_width * scale;
+              const mat = new THREE.MeshBasicMaterial({ color: box.color || 0xff0000 });
+              const cylGeom = new THREE.CylinderGeometry(1, 1, cylHeight, radialSegments);
+
+              const radiusX = (dims[1] / 2) * scale;
+              const radiusZ = (dims[0] / 2) * scale;
+              cylGeom.scale(radiusX, 1, radiusZ);
+              beltMesh = new THREE.Mesh(cylGeom, mat);
+
+              beltMesh.rotation.z = Math.PI/2;
+              beltMesh.rotation.y = box.rotation_angle || 0;
+            }
+
+            else {
+              const g = new THREE.CylinderGeometry(
+                (box.rollDiameter / 2) * scale,
+                (box.rollDiameter / 2) * scale,
+                box.belt_width * scale,
+                32
+              );
+              beltMesh = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: box.color || 0xff0000 }));
+              beltMesh.rotation.z = Math.PI / 2;
+              beltMesh.rotation.y = box.rotation_angle || 0;
+            }
+            beltMesh.position.set(cx, cy, cz);
+            group.add(beltMesh);
+          });
+        }
+        scene.add(group);
+
+
+      const topH = canvasWidth * (container_dims.length / container_dims.width);
+      renderer.setSize(canvasWidth, topH);
+      renderer.clear();
+      renderer.render(scene, camTop);
+      containerImages.push(renderer.domElement.toDataURL("image/png"));
+
+      const sideH = canvasWidth * (container_dims.height / container_dims.length);
+      renderer.setSize(canvasWidth, sideH);
+      renderer.clear();
+      renderer.render(scene, camSide);
+      sideImages.push(renderer.domElement.toDataURL("image/png"));
+
+        scene.remove(group);
+      }
+      Streamlit.setComponentValue({ top: containerImages, side: sideImages });
+
+    });
+  </script>
+  <div id="canvas-container"></div>
+  </body>
+</html>
