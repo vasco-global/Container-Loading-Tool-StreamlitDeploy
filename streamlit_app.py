@@ -193,7 +193,7 @@ def parse_belt(spec, length_str, core_diameter, oval_segment_length,
     # Fall 1: steelcord & round
     if belt_type == "steelcord" and (is_oval is False):
         Belt_Thickness = steel_cord_diameter + carryingSide + runningSide
-        Roll_Diameter = math.sqrt(Belt_Thickness * (length / 1000) * 1.27 + core_diameter)
+        Roll_Diameter = math.sqrt((core_diameter * core_diameter) + ((4 * Belt_Thickness * (length / 1000) / math.pi)))
         Weight_Per_Meter = ((Belt_Thickness / 1.5) * (width / 1000)) * steelCordWeightParameter
         Weight_Per_Roll = ((Belt_Thickness / 1.5) * (width / 1000) * length) * steelCordWeightParameter
         Base_Dims = (width / 1000, Roll_Diameter)
@@ -214,7 +214,7 @@ def parse_belt(spec, length_str, core_diameter, oval_segment_length,
     # Fall 3: standard & round
     elif belt_type == "standard" and (is_oval is False):
         Belt_Thickness = (carcassThicknessPerPly * epLayers) + (1.75 * xeLayers) + carryingSide + runningSide
-        Roll_Diameter = math.sqrt(Belt_Thickness * (length / 1000) * 1.27 + core_diameter)
+        Roll_Diameter = math.sqrt((core_diameter * core_diameter) + ((4 * Belt_Thickness * (length / 1000) / math.pi)))
         Weight_Per_Meter = (((((carcassThicknessPerPly * epLayers) + carryingSide + runningSide) - (
                 epLayers * carcassThicknessPerPly)) / 1.5 + epLayers) * (
                                     width / 1000) * length * carcassThicknessPerPlyRow2 + (
@@ -243,7 +243,7 @@ def parse_belt(spec, length_str, core_diameter, oval_segment_length,
     # Fall 5: ripstop & round
     elif belt_type == "ripstop" and (is_oval is False):
         Belt_Thickness = (carcassThicknessPerPly * epLayers) + (1.75 * xeLayers) + carryingSide + runningSide
-        Roll_Diameter = math.sqrt(Belt_Thickness * (length / 1000) * 1.27 + core_diameter)
+        Roll_Diameter = math.sqrt((core_diameter * core_diameter) + ((4 * Belt_Thickness * (length / 1000) / math.pi)))
         Ripstop_Layers = int(rip_stop_layers)
         Weight_Per_Meter = (((((carcassThicknessPerPly * epLayers) + carryingSide + runningSide) - (
                 epLayers * carcassThicknessPerPly)) / 1.5 + epLayers) * (
@@ -279,7 +279,7 @@ def parse_belt(spec, length_str, core_diameter, oval_segment_length,
                 + carryingSide + runningSide
                 + chevronCleatHeight
         )
-        Roll_Diameter = math.sqrt(Belt_Thickness * (length / 1000) * 1.27 + core_diameter)
+        Roll_Diameter = math.sqrt((core_diameter * core_diameter) + ((4 * Belt_Thickness * (length / 1000) / math.pi)))
         Weight_Per_Meter = (
                                    (
                                            (
