@@ -2,12 +2,8 @@ credentials:
   usernames:
     # User 1
     user1:
-      name: "User1"
-      password: "passwort1"
-    # User 2
-    user2:
-      name: "User2"
-      password: "passwort2"
+      name: "user"
+      password: "vasco#2925"
 cookie:
   name: "streamlit_auth_cookie"
   key: "SOME_RANDOMLY_GENERATED_KEY"
