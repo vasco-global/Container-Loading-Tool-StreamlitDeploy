@@ -1,5 +1,6 @@
 import base64
 from datetime import date
+import time
 
 import streamlit as st
 import pandas as pd
