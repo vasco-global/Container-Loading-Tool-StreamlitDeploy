@@ -1910,7 +1910,9 @@ username        = st.session_state.get("username")
 
 
 if auth_status:
-    st.sidebar.success(f"logged in as {name}")
+    login_success = st.sidebar.success(f"logged in as {name}")
+    time.sleep(5)
+    login_success.empty()
 
     st.title("Container-Loading Tool")
 
