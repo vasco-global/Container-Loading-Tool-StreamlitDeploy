@@ -9,6 +9,7 @@ import colorsys, json
 import streamlit.components.v1 as components
 import io
 
+import streamlit_authenticator
 from reportlab.lib.enums import TA_LEFT
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.units import mm
@@ -25,6 +26,9 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 from reportlab.graphics.shapes import Drawing, Rect
 
+import streamlit_authenticator as stauth
+import yaml
+
 st.set_page_config(layout="wide")
 
 if 'belt_id_counter' not in st.session_state:
@@ -39,6 +43,7 @@ if "heavy_dialog_seen" not in st.session_state:
 if "topview_refresh_counter" not in st.session_state:
     st.session_state["topview_refresh_counter"] = 0
 
+placeholder = st.empty()
 # ------------------- Lookup-Tabellen & Container-Daten -------------------
 carcassThicknessLookup = {
     "EP100": 1.0, "EP125": 1.0, "EP150": 1.1, "EP200": 1.2, "EP250": 1.4,
@@ -1888,763 +1893,794 @@ def get_threejs_html_all(containers, container_dims, scale=100):
     return html_template
 
 # ------------------- Streamlit UI -------------------
+with open("config.yaml") as file:
+    config = yaml.safe_load(file)
 
-st.title("Container-Loading Tool")
-
-
-@st.cache_data
-def get_base64_of_bin_file(bin_file):
-    with open(bin_file, 'rb') as f:
-        data = f.read()
-    return base64.b64encode(data).decode()
-
-
-def set_png_as_page_bg(png_file, overlay_opacity=0.95):
-    bin_str = get_base64_of_bin_file(png_file)
-
-    page_bg_img = f'''
-    <style>
-    [data-testid="stAppViewContainer"] {{
-        background: 
-            linear-gradient(rgba(14, 17, 23, {overlay_opacity}), rgba(14, 17, 23, {overlay_opacity})),
-            url("data:image/png;base64,{bin_str}");
-        background-size: cover;
-    }}
-    </style>
-    '''
-
-    st.markdown(page_bg_img, unsafe_allow_html=True)
-
-
-_topview_component = components.declare_component(
-    "topview_component",
-    path="static/topview_component"
+authenticator = streamlit_authenticator.Authenticate(
+    credentials   = config["credentials"],
+    cookie_name   = config["cookie"]["name"],
+    key           = config["cookie"]["key"],
+    expiry_days   = config["cookie"]["expiry_days"],
 )
 
+authenticator.login()
+name            = st.session_state.get("name")
+auth_status     = st.session_state.get("authentication_status")
+username        = st.session_state.get("username")
 
-def top_and_side_component(containers, container_dims, scale=100, refresh=True):
 
-    return _topview_component(
-        containers=containers,
-        container_dims=container_dims,
-        scale=scale,
-        refreshTopview=refresh,
-        default={"top": [], "side": []}
+if auth_status:
+    st.sidebar.success(f"logged in as {name}")
+
+    st.title("Container-Loading Tool")
+
+
+    @st.cache_data
+    def get_base64_of_bin_file(bin_file):
+        with open(bin_file, 'rb') as f:
+            data = f.read()
+        return base64.b64encode(data).decode()
+
+
+    def set_png_as_page_bg(png_file, overlay_opacity=0.95):
+        bin_str = get_base64_of_bin_file(png_file)
+
+        page_bg_img = f'''
+        <style>
+        [data-testid="stAppViewContainer"] {{
+            background: 
+                linear-gradient(rgba(14, 17, 23, {overlay_opacity}), rgba(14, 17, 23, {overlay_opacity})),
+                url("data:image/png;base64,{bin_str}");
+            background-size: cover;
+        }}
+        </style>
+        '''
+
+        st.markdown(page_bg_img, unsafe_allow_html=True)
+
+
+    _topview_component = components.declare_component(
+        "topview_component",
+        path="static/topview_component"
     )
 
 
+    def top_and_side_component(containers, container_dims, scale=100, refresh=True):
 
-if "belt_updates" not in st.session_state:
-    st.session_state["belt_updates"] = {}
-if "show_addbelt_confirm" not in st.session_state:
-    st.session_state.show_addbelt_confirm = False
-if "pending_belt" not in st.session_state:
-    st.session_state.pending_belt = None
-
-set_png_as_page_bg('static/Vasco_Hintergrundbild.jpg')
-
-st.sidebar.header("Settings")
-container_type = st.sidebar.selectbox("Choose Container:", list(containerData.keys()))
-default_load = containerData[container_type]["max_load"]
-custom_max_load = st.sidebar.number_input("Max. Container Weight (kg)", value=default_load, step=100)
-forklift_limit = st.sidebar.number_input("Max. Forklift Weight (kg)", value=8000, step=100)
-allow_rotation = st.sidebar.checkbox("Allow Rotation (3D)", value=True)
-center_chevrons = st.sidebar.checkbox("Center Chevrons", value=True)
-
-if st.sidebar.checkbox("Debug Mode"):
-    for idx, belt in enumerate(st.session_state.belts):
-        with st.expander(f"Belt {idx + 1} – {belt['spec']}"):
-            st.json(belt)
-
-with st.sidebar.expander("Add Belt manually"):
-    st.header("Conveyor Belt")
-    is_oval = st.checkbox("Oval Roll", value=False)
-    is_steelcord = st.checkbox("Steelcord", value=False)
-    is_ripstop = st.checkbox("Ripstop", value=False)
-    spec = st.text_input("Belt-Specification (e.g. 1200 EP500/3-5:2-Y / CE)")
-    length_input = st.text_input("Length (m)")
-    core_diameter = st.number_input("Core Diameter [m]", value=0.3, format="%.3f")
-    if is_oval:
-        oval_segment_length = st.number_input("Oval Segment Length [m]", value=0.0, format="%.3f")
-    else:
-        oval_segment_length = 0
-    if is_steelcord:
-        steel_cord_diameter = st.number_input("Steel Cord Diameter [mm]", value=0.0, format="%.2f")
-    else:
-        steel_cord_diameter = 0
-    if is_ripstop:
-        rip_stop_layers = st.number_input("Rip-Stop Layers", value=0, step=1)
-    else:
-        rip_stop_layers = 0
-
-    if st.button("Add Belt"):
-        belt = parse_belt(spec, length_input, core_diameter, oval_segment_length,
-                          steel_cord_diameter, rip_stop_layers, is_oval)
-        if belt is not None:
-            cont = containerData[container_type]
-            w, l = belt["base_dims"]
-            fits_footprint = (w <= cont["width"] and l <= cont["length"]) or (
-                    allow_rotation and l <= cont["width"] and w <= cont["length"])
-            fits_weight = belt["weightPerRoll"] <= forklift_limit and belt["weightPerRoll"] <= cont["max_load"]
-            if not (fits_footprint and fits_weight):
-                st.session_state.pending_belt = belt
-                st.session_state.show_addbelt_confirm = True
-            else:
-                belt["id"] = st.session_state['belt_id_counter']
-                st.session_state['belt_id_counter'] += 1
-                st.session_state.belts.append(belt)
-                st.success(f"Added Belt: {belt['spec']}")
-                st.rerun()
+        return _topview_component(
+            containers=containers,
+            container_dims=container_dims,
+            scale=scale,
+            refreshTopview=refresh,
+            default={"top": [], "side": []}
+        )
 
 
-    @st.dialog("Belt too heavy for forklift")
-    def heavy_belt_dialog(spec: str, limit: float):
-        st.write(f"Belt too heavy for forklift ({limit} kg): {spec}")
-        if st.button("OK"):
-            st.session_state["show_heavy_dialog"] = False
-            st.rerun()
 
+    if "belt_updates" not in st.session_state:
+        st.session_state["belt_updates"] = {}
+    if "show_addbelt_confirm" not in st.session_state:
+        st.session_state.show_addbelt_confirm = False
+    if "pending_belt" not in st.session_state:
+        st.session_state.pending_belt = None
 
-    @st.dialog("Belt too big for container configuration")
-    def belt_doesnt_fit(spec: str):
-        st.write(f"The Belt is too big: {spec}")
-        rejected_belts.append(box)
-        if st.button("OK"):
-            pass
+    set_png_as_page_bg('static/Vasco_Hintergrundbild.jpg')
 
+    st.sidebar.header("Settings")
+    container_type = st.sidebar.selectbox("Choose Container:", list(containerData.keys()))
+    default_load = containerData[container_type]["max_load"]
+    custom_max_load = st.sidebar.number_input("Max. Container Weight (kg)", value=default_load, step=100)
+    forklift_limit = st.sidebar.number_input("Max. Forklift Weight (kg)", value=8000, step=100)
+    allow_rotation = st.sidebar.checkbox("Allow Rotation (3D)", value=True)
+    center_chevrons = st.sidebar.checkbox("Center Chevrons", value=True)
 
-    @st.dialog("Warning: Belt doesn't fit into container ")
-    def addbelt_confirm():
-        st.write("The Belt does not fit into the container settings.")
-        c1, c2 = st.columns(2)
-        with c1:
-            if st.button("Abort"):
-                st.session_state.show_addbelt_confirm = False
-                st.session_state.pending_belt = None
-                st.rerun()
-        with c2:
-            if st.button("Add anyway"):
-                b = st.session_state.pending_belt
-                b["id"] = st.session_state['belt_id_counter']
-                st.session_state['belt_id_counter'] += 1
-                st.session_state.belts.append(b)
-                st.session_state.show_addbelt_confirm = False
-                st.session_state.pending_belt = None
-                st.success(f"Added Belt: {b['spec']}")
-                st.rerun()
+    if st.sidebar.checkbox("Debug Mode"):
+        for idx, belt in enumerate(st.session_state.belts):
+            with st.expander(f"Belt {idx + 1} – {belt['spec']}"):
+                st.json(belt)
 
+    with st.sidebar.expander("Add Belt manually"):
+        st.header("Conveyor Belt")
+        is_oval = st.checkbox("Oval Roll", value=False)
+        is_steelcord = st.checkbox("Steelcord", value=False)
+        is_ripstop = st.checkbox("Ripstop", value=False)
+        spec = st.text_input("Belt-Specification (e.g. 1200 EP500/3-5:2-Y / CE)")
+        length_input = st.text_input("Length (m)")
+        core_diameter = st.number_input("Core Diameter [m]", value=0.3, format="%.3f")
+        if is_oval:
+            oval_segment_length = st.number_input("Oval Segment Length [m]", value=0.0, format="%.3f")
+        else:
+            oval_segment_length = 0
+        if is_steelcord:
+            steel_cord_diameter = st.number_input("Steel Cord Diameter [mm]", value=0.0, format="%.2f")
+        else:
+            steel_cord_diameter = 0
+        if is_ripstop:
+            rip_stop_layers = st.number_input("Rip-Stop Layers", value=0, step=1)
+        else:
+            rip_stop_layers = 0
 
-    if st.session_state.show_addbelt_confirm:
-        addbelt_confirm()
-
-with st.sidebar.expander("Add Object manually"):
-    st.header("***UNDER CONSTRUCTION***")
-    obj_height = st.number_input("Height (m)", value=1.0, format="%.3f", key="obj_height")
-    obj_width = st.number_input("Width (m)", value=1.0, format="%.3f", key="obj_width")
-    obj_length = st.number_input("Length (m)", value=1.0, format="%.3f", key="obj_length")
-    obj_weight = st.number_input("Weight (kg)", value=100.0, step=1.0, format="%.2f", key="obj_weight")
-
-    if st.button("Add object", key="add_object_button"):
-        if 'object_id_counter' not in st.session_state:
-            st.session_state['object_id_counter'] = 0
-        new_object = {
-            "spec": f"Object {st.session_state['object_id_counter']}",
-            "length": obj_length,
-            "belt_width": obj_width,
-            "width_mm": obj_width * 1000,
-            "base_dims": (obj_width, obj_length),
-            "weightPerRoll": obj_weight,
-            "height_3d": obj_height,
-            "rollDiameter": obj_height,
-            "color": get_random_color(),
-            "initialPos": [0, 0],
-            "is_box": True,
-            "itemType": "object"
-        }
-        st.session_state['object_id_counter'] += 1
-        st.session_state.belts.append(new_object)
-        st.success(f"Objekt hinzugefügt: {new_object['spec']}")
-
-        cont = containerData[container_type]
-        containers, rejected_belts = pack_belts_into_containers(st.session_state.belts, cont, allow_rotation,
-                                                                forklift_limit)
-        st.session_state["containers"] = containers
-        st.session_state["rejected_belts"] = rejected_belts
-
-        st.session_state["last_belts_count"] = len(st.session_state.belts)
-        st.session_state["needs_reordering"] = False
-
-with st.sidebar.expander("Other Settings"):
-    on = st.toggle("Ambelt Mode")
-    if on:
-        image = 'static/ambelt_logo.svg'
-        st.logo(image, size="large", link='https://www.ambelt.de/', icon_image=None)
-    else:
-        image = 'static/Vasco Logo fin_white.png'
-        st.logo(image, size="large", link='https://vasco-global.com/', icon_image=None)
-
-defaults = {
-    "order_meta_set": False,
-    "order_num": "",
-    "current_date": date.today(),
-    "sender": "",
-    "receiver": ""
-}
-for k, v in defaults.items():
-    if k not in st.session_state:
-        st.session_state[k] = v
-
-uploaded_file = st.file_uploader("Upload Excel-File", type=["xlsx", "xls"])
-if uploaded_file is None and st.session_state.get("excel_file_name"):
-    st.session_state.pop("excel_file_name", None)
-    st.session_state.order_meta_set = False
-    st.session_state.order_num = ""
-    st.session_state.current_date = date.today()
-    st.session_state.sender = ""
-    st.session_state.receiver = ""
-    st.session_state.belts = []
-    st.session_state.rejected_belts = []
-    st.session_state.containers = []
-    st.session_state.last_belts_count = 0
-    st.session_state.belt_id_counter = 0
-
-    st.stop()
-
-if uploaded_file is not None and not st.session_state.order_meta_set:
-
-    @st.dialog("Shipping Details")
-    def shipping_dialog():
-        st.session_state.order_num = st.text_input(
-            "Order Number", value=st.session_state.order_num, key="ord_num")
-        st.session_state.current_date = st.date_input(
-            "Date", value=st.session_state.current_date, key="ord_date")
-        st.session_state.sender = st.text_input(
-            "Sender", value=st.session_state.sender, key="ord_sender")
-        st.session_state.receiver = st.text_input(
-            "Receiver", value=st.session_state.receiver, key="ord_receiver")
-
-        if st.button("Save"):
-            st.session_state.order_meta_set = True
-            st.rerun()
-
-
-    shipping_dialog()
-    st.stop()
-
-if uploaded_file is not None:
-    df = pd.read_excel(uploaded_file)
-    df.columns = df.columns.str.strip()
-    cont = containerData[container_type]
-    cont["max_load"] = custom_max_load
-    if st.session_state.get("excel_file_name", "") != uploaded_file.name:
-        try:
-            for _, row in df.iterrows():
-
-                spec_excel = str(row["Belt Specification"]).strip()
-                length_excel = str(row["Length"]).replace("m", "").strip()
-                core_diameter_excel = float(row["Core Diameter [m]"])
-
-                val_sc = row.get("Steelcord Cord Diameter [mm] (if Steelcord)", None)
-                steel_cord_diameter_excel = float(val_sc) if pd.notna(val_sc) else 0.0
-
-                val_oval = row.get("Oval Segment Length [m] (if Oval)", None)
-                oval_segment_length_excel = float(val_oval) if pd.notna(val_oval) else 0.0
-
-                val_rip = row.get("RipStop Layers (if Ripstop)", None)
-                rip_stop_layers_excel = int(val_rip) if pd.notna(val_rip) else 0
-
-                is_oval = oval_segment_length_excel > 0
-
-                belt = parse_belt(
-                    spec_excel,
-                    length_excel,
-                    core_diameter_excel,
-                    oval_segment_length_excel,
-                    steel_cord_diameter_excel,
-                    rip_stop_layers_excel,
-                    is_oval
-                )
-                if belt is not None:
+        if st.button("Add Belt"):
+            belt = parse_belt(spec, length_input, core_diameter, oval_segment_length,
+                              steel_cord_diameter, rip_stop_layers, is_oval)
+            if belt is not None:
+                cont = containerData[container_type]
+                w, l = belt["base_dims"]
+                fits_footprint = (w <= cont["width"] and l <= cont["length"]) or (
+                        allow_rotation and l <= cont["width"] and w <= cont["length"])
+                fits_weight = belt["weightPerRoll"] <= forklift_limit and belt["weightPerRoll"] <= cont["max_load"]
+                if not (fits_footprint and fits_weight):
+                    st.session_state.pending_belt = belt
+                    st.session_state.show_addbelt_confirm = True
+                else:
                     belt["id"] = st.session_state['belt_id_counter']
                     st.session_state['belt_id_counter'] += 1
                     st.session_state.belts.append(belt)
-                    containers, rejected_belts = pack_belts_into_containers(st.session_state.belts, cont,
-                                                                            allow_rotation, forklift_limit)
-
-                    st.session_state["containers"] = containers
-                    st.session_state["rejected_belts"] = rejected_belts
-
-                    st.session_state["last_belts_count"] = len(st.session_state.belts)
-                    st.session_state["needs_reordering"] = False
-            st.session_state["excel_file_name"] = uploaded_file.name
-        except Exception as e:
-            st.error(f"Error while opening the Excel-File: {e}")
-
-st.divider()
-col3d, coledit = st.columns([6, 4])
-
-with col3d:
-    cont = containerData[container_type]
-    cont["max_load"] = custom_max_load
-
-    if ("last_belts_count" not in st.session_state) or (
-            st.session_state["last_belts_count"] != len(st.session_state.belts)):
-        containers, rejected_belts = pack_belts_into_containers(st.session_state.belts, cont, allow_rotation,
-                                                                forklift_limit)
-        st.session_state["containers"] = containers
-        st.session_state["last_belts_count"] = len(st.session_state.belts)
-        st.session_state["needs_reordering"] = False
-    else:
-        containers = st.session_state["containers"]
-        for cont_obj in containers:
-            for box in cont_obj["boxes"]:
-                matching_belts = [belt for belt in st.session_state.belts if belt.get("id") == box.get("id")]
-                if matching_belts:
-                    belt = matching_belts[0]
-                    box["rollDiameter"] = belt["rollDiameter"]
-                    box["weightPerRoll"] = belt["weightPerRoll"]
-
-    html_str = get_threejs_html_all(containers, cont, scale=100)
-    st.components.v1.html(html_str, height=700, scrolling=True)
-    views = top_and_side_component(containers, cont, scale=100, refresh=True)
-    topview_images = views["top"]
-    sideview_images = views["side"]
-
-with coledit:
-    def dynamic_data_editor(data, key, **kwargs):
-        initial_key = f"{key}_initial"
-        changed_key = f"{key}_changed"
-        if initial_key not in st.session_state:
-            st.session_state[initial_key] = data.copy()
-        if changed_key not in st.session_state:
-            st.session_state[changed_key] = False
-
-        def _on_change():
-            st.session_state[changed_key] = True
-
-        editor_value = st.data_editor(data, key=key, on_change=_on_change, **kwargs)
-        return editor_value
+                    st.success(f"Added Belt: {belt['spec']}")
+                    st.rerun()
 
 
-    def belts_to_df(belts):
-        import pandas as pd
-        data = []
-        for i, belt in enumerate(belts):
-            data.append({
-                "ID": i,
-                "Specification": belt["spec"],
-                "Length (m)": belt["length"],
-                "Core Diameter (m)": belt.get("core_diameter", 0.3),
-            })
-        return pd.DataFrame(data).set_index("ID")
+        @st.dialog("Belt too heavy for forklift")
+        def heavy_belt_dialog(spec: str, limit: float):
+            st.write(f"Belt too heavy for forklift ({limit} kg): {spec}")
+            if st.button("OK"):
+                st.session_state["show_heavy_dialog"] = False
+                st.rerun()
 
 
-    if st.session_state.belts:
-        df_belts = belts_to_df(st.session_state.belts)
-        df_belts["Remove"] = False
-        edited_df = dynamic_data_editor(df_belts, key="belt_editor", use_container_width=True, height=636)
-
-        remove_ids = edited_df[edited_df["Remove"] == True].index.tolist()
-        if remove_ids:
-            st.session_state.belts = [
-                belt for i, belt in enumerate(st.session_state.belts) if i not in remove_ids
-            ]
-            st.rerun()
+        @st.dialog("Belt too big for container configuration")
+        def belt_doesnt_fit(spec: str):
+            st.write(f"The Belt is too big: {spec}")
+            rejected_belts.append(box)
+            if st.button("OK"):
+                pass
 
 
+        @st.dialog("Warning: Belt doesn't fit into container ")
+        def addbelt_confirm():
+            st.write("The Belt does not fit into the container settings.")
+            c1, c2 = st.columns(2)
+            with c1:
+                if st.button("Abort"):
+                    st.session_state.show_addbelt_confirm = False
+                    st.session_state.pending_belt = None
+                    st.rerun()
+            with c2:
+                if st.button("Add anyway"):
+                    b = st.session_state.pending_belt
+                    b["id"] = st.session_state['belt_id_counter']
+                    st.session_state['belt_id_counter'] += 1
+                    st.session_state.belts.append(b)
+                    st.session_state.show_addbelt_confirm = False
+                    st.session_state.pending_belt = None
+                    st.success(f"Added Belt: {b['spec']}")
+                    st.rerun()
 
-        if st.session_state.get("belt_editor_changed", False):
-            for idx, row in edited_df.iterrows():
-                new_spec = row["Specification"]
-                new_length = float(row["Length (m)"])
-                new_core = float(row["Core Diameter (m)"])
-                st.session_state.belts[int(idx)] = recalc_belt(
-                    st.session_state.belts[int(idx)],
-                    new_spec,
-                    new_length,
-                    new_core
-                )
-            st.session_state["belt_editor_changed"] = False
 
+        if st.session_state.show_addbelt_confirm:
+            addbelt_confirm()
+
+    with st.sidebar.expander("Add Object manually"):
+        st.header("***UNDER CONSTRUCTION***")
+        obj_height = st.number_input("Height (m)", value=1.0, format="%.3f", key="obj_height")
+        obj_width = st.number_input("Width (m)", value=1.0, format="%.3f", key="obj_width")
+        obj_length = st.number_input("Length (m)", value=1.0, format="%.3f", key="obj_length")
+        obj_weight = st.number_input("Weight (kg)", value=100.0, step=1.0, format="%.2f", key="obj_weight")
+
+        if st.button("Add object", key="add_object_button"):
+            if 'object_id_counter' not in st.session_state:
+                st.session_state['object_id_counter'] = 0
+            new_object = {
+                "spec": f"Object {st.session_state['object_id_counter']}",
+                "length": obj_length,
+                "belt_width": obj_width,
+                "width_mm": obj_width * 1000,
+                "base_dims": (obj_width, obj_length),
+                "weightPerRoll": obj_weight,
+                "height_3d": obj_height,
+                "rollDiameter": obj_height,
+                "color": get_random_color(),
+                "initialPos": [0, 0],
+                "is_box": True,
+                "itemType": "object"
+            }
+            st.session_state['object_id_counter'] += 1
+            st.session_state.belts.append(new_object)
+            st.success(f"Objekt hinzugefügt: {new_object['spec']}")
+
+            cont = containerData[container_type]
+            containers, rejected_belts = pack_belts_into_containers(st.session_state.belts, cont, allow_rotation,
+                                                                    forklift_limit)
+            st.session_state["containers"] = containers
+            st.session_state["rejected_belts"] = rejected_belts
+
+            st.session_state["last_belts_count"] = len(st.session_state.belts)
+            st.session_state["needs_reordering"] = False
+
+    with st.sidebar.expander("Other Settings"):
+        on = st.toggle("Ambelt Mode")
+        if on:
+            image = 'static/ambelt_logo.svg'
+            st.logo(image, size="large", link='https://www.ambelt.de/', icon_image=None)
+        else:
+            image = 'static/Vasco Logo fin_white.png'
+            st.logo(image, size="large", link='https://vasco-global.com/', icon_image=None)
+    authenticator.logout("Logout", "sidebar")
+    defaults = {
+        "order_meta_set": False,
+        "order_num": "",
+        "current_date": date.today(),
+        "sender": "",
+        "receiver": ""
+    }
+    for k, v in defaults.items():
+        if k not in st.session_state:
+            st.session_state[k] = v
+
+    uploaded_file = st.file_uploader("Upload Excel-File", type=["xlsx", "xls"])
+    if uploaded_file is None and st.session_state.get("excel_file_name"):
+        st.session_state.pop("excel_file_name", None)
+        st.session_state.order_meta_set = False
+        st.session_state.order_num = ""
+        st.session_state.current_date = date.today()
+        st.session_state.sender = ""
+        st.session_state.receiver = ""
+        st.session_state.belts = []
+        st.session_state.rejected_belts = []
+        st.session_state.containers = []
+        st.session_state.last_belts_count = 0
+        st.session_state.belt_id_counter = 0
+
+        st.stop()
+
+    if uploaded_file is not None and not st.session_state.order_meta_set:
+
+        @st.dialog("Shipping Details")
+        def shipping_dialog():
+            st.session_state.order_num = st.text_input(
+                "Order Number", value=st.session_state.order_num, key="ord_num")
+            st.session_state.current_date = st.date_input(
+                "Date", value=st.session_state.current_date, key="ord_date")
+            st.session_state.sender = st.text_input(
+                "Sender", value=st.session_state.sender, key="ord_sender")
+            st.session_state.receiver = st.text_input(
+                "Receiver", value=st.session_state.receiver, key="ord_receiver")
+
+            if st.button("Save"):
+                st.session_state.order_meta_set = True
+                st.rerun()
+
+
+        shipping_dialog()
+        st.stop()
+
+    if uploaded_file is not None:
+        df = pd.read_excel(uploaded_file)
+        df.columns = df.columns.str.strip()
+        cont = containerData[container_type]
+        cont["max_load"] = custom_max_load
+        if st.session_state.get("excel_file_name", "") != uploaded_file.name:
+            try:
+                for _, row in df.iterrows():
+
+                    spec_excel = str(row["Belt Specification"]).strip()
+                    length_excel = str(row["Length"]).replace("m", "").strip()
+                    core_diameter_excel = float(row["Core Diameter [m]"])
+
+                    val_sc = row.get("Steelcord Cord Diameter [mm] (if Steelcord)", None)
+                    steel_cord_diameter_excel = float(val_sc) if pd.notna(val_sc) else 0.0
+
+                    val_oval = row.get("Oval Segment Length [m] (if Oval)", None)
+                    oval_segment_length_excel = float(val_oval) if pd.notna(val_oval) else 0.0
+
+                    val_rip = row.get("RipStop Layers (if Ripstop)", None)
+                    rip_stop_layers_excel = int(val_rip) if pd.notna(val_rip) else 0
+
+                    is_oval = oval_segment_length_excel > 0
+
+                    belt = parse_belt(
+                        spec_excel,
+                        length_excel,
+                        core_diameter_excel,
+                        oval_segment_length_excel,
+                        steel_cord_diameter_excel,
+                        rip_stop_layers_excel,
+                        is_oval
+                    )
+                    if belt is not None:
+                        belt["id"] = st.session_state['belt_id_counter']
+                        st.session_state['belt_id_counter'] += 1
+                        st.session_state.belts.append(belt)
+                        containers, rejected_belts = pack_belts_into_containers(st.session_state.belts, cont,
+                                                                                allow_rotation, forklift_limit)
+
+                        st.session_state["containers"] = containers
+                        st.session_state["rejected_belts"] = rejected_belts
+
+                        st.session_state["last_belts_count"] = len(st.session_state.belts)
+                        st.session_state["needs_reordering"] = False
+                st.session_state["excel_file_name"] = uploaded_file.name
+            except Exception as e:
+                st.error(f"Error while opening the Excel-File: {e}")
+
+    st.divider()
+    col3d, coledit = st.columns([6, 4])
+
+    with col3d:
+        cont = containerData[container_type]
+        cont["max_load"] = custom_max_load
+
+        if ("last_belts_count" not in st.session_state) or (
+                st.session_state["last_belts_count"] != len(st.session_state.belts)):
+            containers, rejected_belts = pack_belts_into_containers(st.session_state.belts, cont, allow_rotation,
+                                                                    forklift_limit)
+            st.session_state["containers"] = containers
+            st.session_state["last_belts_count"] = len(st.session_state.belts)
+            st.session_state["needs_reordering"] = False
+        else:
             containers = st.session_state["containers"]
             for cont_obj in containers:
                 for box in cont_obj["boxes"]:
                     matching_belts = [belt for belt in st.session_state.belts if belt.get("id") == box.get("id")]
                     if matching_belts:
                         belt = matching_belts[0]
-                        pos = box["position"]
-                        placed_dims = box["placed_dims"]
-                        rotation = box.get("rotation_angle", 0)
                         box["rollDiameter"] = belt["rollDiameter"]
                         box["weightPerRoll"] = belt["weightPerRoll"]
-                        box["spec"] = belt["spec"]
-                        box["length"] = belt["length"]
-                        box["core_diameter"] = belt.get("core_diameter", 0.30)
-                        box["width_mm"] = belt["width_mm"]
-                        box["belt_width"] = belt["belt_width"]
-                        box["position"] = pos
-                        box["placed_dims"] = placed_dims
-                        box["rotation_angle"] = rotation
-            st.session_state["containers"] = containers
-            st.rerun()
 
-        if st.button("Reload"):
-            cont = containerData[container_type].copy()
-            cont["max_load"] = custom_max_load
-            for belt in st.session_state.belts:
-                if belt.get("belt_type") == "chevron":
-                    belt["chevron_center"] = center_chevrons
+        html_str = get_threejs_html_all(containers, cont, scale=100)
+        st.components.v1.html(html_str, height=700, scrolling=True)
+        views = top_and_side_component(containers, cont, scale=100, refresh=st.session_state["topview_refresh_counter"])
+        if views.get("beltUpdate"):
+            st.write("Test")
 
-            containers, rejected_belts = pack_belts_into_containers(st.session_state.belts, cont, allow_rotation,
-                                                                    forklift_limit)
-            st.session_state["containers"] = containers
-            st.session_state["needs_reordering"] = False
-            st.session_state["last_belts_count"] = -1
+        topview_images = views["top"]
+        sideview_images = views["side"]
 
-            for belt in rejected_belts:
-                st.error(f"Belt to heavy for forklift: ({forklift_limit} kg): {belt['spec']}")
-            st.rerun()
 
-    else:
-        st.info("No belts added yet.")
-st.divider()
-st.subheader("Container Preview")
+    with coledit:
+        def dynamic_data_editor(data, key, **kwargs):
+            initial_key = f"{key}_initial"
+            changed_key = f"{key}_changed"
+            if initial_key not in st.session_state:
+                st.session_state[initial_key] = data.copy()
+            if changed_key not in st.session_state:
+                st.session_state[changed_key] = False
 
-for cont_obj in containers:
-    container_num = cont_obj["id"]
+            def _on_change():
+                st.session_state[changed_key] = True
 
-    st.markdown(
-        f"<div style='text-align: center; font-weight: bold; background-color: rgba(24,25,26.7, 0.5); border: 1px solid black; font-size: 18px;'>CONTAINER {container_num}</div>",
-        unsafe_allow_html=True,
-    )
-    st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
-    col_left, col_right = st.columns([1, 2])
-    with col_left:
-        if topview_images and isinstance(topview_images, list) and len(topview_images) >= container_num:
-            st.image(topview_images[container_num - 1], width=240, caption="DOOR")
+            editor_value = st.data_editor(data, key=key, on_change=_on_change, **kwargs)
+            return editor_value
 
-    with col_right:
-        tab1, tab2 = st.tabs(["Table", "Side-Preview"])
-        with tab1:
-            table_html = "<table style='width:100%; border-collapse: collapse;'>"
-            table_html += (
-                "<tr style='border: 1px solid black; background-color: #262730; text-align: center;'>"
-                "<th>Color</th>"
-                "<th>Nr.</th>"
-                "<th>Spec</th>"
-                "<th>Length (m)</th>"
-                "<th>Width (mm)</th>"
-                "<th>Roll Diameter (m)</th>"
-                "<th>Weight/roll (kg)</th>"
 
-                "</tr>"
-            )
-            row_num = 1
-            for box in cont_obj["boxes"]:
-                color = box.get("color", "#FF0000")
-                color_cell = f"<span style='display:inline-block;width:20px;height:20px;background:{color};'></span>"
+        def belts_to_df(belts):
+            import pandas as pd
+            data = []
+            for i, belt in enumerate(belts):
+                data.append({
+                    "ID": i,
+                    "Specification": belt["spec"],
+                    "Length (m)": belt["length"],
+                    "Core Diameter (m)": belt.get("core_diameter", 0.3),
+                })
+            return pd.DataFrame(data).set_index("ID")
+
+
+        if st.session_state.belts:
+            df_belts = belts_to_df(st.session_state.belts)
+            df_belts["Remove"] = False
+            edited_df = dynamic_data_editor(df_belts, key="belt_editor", use_container_width=True, height=636)
+
+            remove_ids = edited_df[edited_df["Remove"] == True].index.tolist()
+            if remove_ids:
+                st.session_state.belts = [
+                    belt for i, belt in enumerate(st.session_state.belts) if i not in remove_ids
+                ]
+                st.rerun()
+
+
+
+            if st.session_state.get("belt_editor_changed", False):
+                for idx, row in edited_df.iterrows():
+                    new_spec = row["Specification"]
+                    new_length = float(row["Length (m)"])
+                    new_core = float(row["Core Diameter (m)"])
+                    st.session_state.belts[int(idx)] = recalc_belt(
+                        st.session_state.belts[int(idx)],
+                        new_spec,
+                        new_length,
+                        new_core
+                    )
+                st.session_state["belt_editor_changed"] = False
+
+                containers = st.session_state["containers"]
+                for cont_obj in containers:
+                    for box in cont_obj["boxes"]:
+                        matching_belts = [belt for belt in st.session_state.belts if belt.get("id") == box.get("id")]
+                        if matching_belts:
+                            belt = matching_belts[0]
+                            pos = box["position"]
+                            placed_dims = box["placed_dims"]
+                            rotation = box.get("rotation_angle", 0)
+                            box["rollDiameter"] = belt["rollDiameter"]
+                            box["weightPerRoll"] = belt["weightPerRoll"]
+                            box["spec"] = belt["spec"]
+                            box["length"] = belt["length"]
+                            box["core_diameter"] = belt.get("core_diameter", 0.30)
+                            box["width_mm"] = belt["width_mm"]
+                            box["belt_width"] = belt["belt_width"]
+                            box["position"] = pos
+                            box["placed_dims"] = placed_dims
+                            box["rotation_angle"] = rotation
+                st.session_state["containers"] = containers
+                st.rerun()
+
+            if st.button("Reload"):
+                cont = containerData[container_type].copy()
+                cont["max_load"] = custom_max_load
+                for belt in st.session_state.belts:
+                    if belt.get("belt_type") == "chevron":
+                        belt["chevron_center"] = center_chevrons
+
+                containers, rejected_belts = pack_belts_into_containers(st.session_state.belts, cont, allow_rotation,
+                                                                        forklift_limit)
+                st.session_state["containers"] = containers
+                st.session_state["needs_reordering"] = False
+                st.session_state["last_belts_count"] = -1
+
+                for belt in rejected_belts:
+                    st.error(f"Belt to heavy for forklift: ({forklift_limit} kg): {belt['spec']}")
+                st.rerun()
+
+        else:
+            st.info("No belts added yet.")
+    st.divider()
+    st.subheader("Container Preview")
+
+    if st.button("Vorschau neu laden"):
+        st.session_state["topview_refresh_counter"] += 1
+        st.rerun()
+
+    for cont_obj in containers:
+        container_num = cont_obj["id"]
+
+        st.markdown(
+            f"<div style='text-align: center; font-weight: bold; background-color: rgba(24,25,26.7, 0.5); border: 1px solid black; font-size: 18px;'>CONTAINER {container_num}</div>",
+            unsafe_allow_html=True,
+        )
+        st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
+        col_left, col_right = st.columns([1, 2])
+        with col_left:
+            if topview_images and isinstance(topview_images, list) and len(topview_images) >= container_num:
+                st.image(topview_images[container_num - 1], width=240, caption="DOOR")
+
+        with col_right:
+            tab1, tab2 = st.tabs(["Table", "Side-Preview"])
+            with tab1:
+                table_html = "<table style='width:100%; border-collapse: collapse;'>"
                 table_html += (
-                    "<tr style='border: 1px solid black; text-align: center; background-color: #262730;'>"
-                    f"<td>{color_cell}</td>"
-                    f"<td>{row_num}</td>"
-                    f"<td>{box['spec']}</td>"
-                    f"<td>{box['length']:.2f}</td>"
-                    f"<td>{box['width_mm']:.0f}</td>"
-                    f"<td>{box['rollDiameter']:.2f}</td>"
-                    f"<td>{box['weightPerRoll']:.2f}</td>"
+                    "<tr style='border: 1px solid black; background-color: #262730; text-align: center;'>"
+                    "<th>Color</th>"
+                    "<th>Nr.</th>"
+                    "<th>Spec</th>"
+                    "<th>Length (m)</th>"
+                    "<th>Width (mm)</th>"
+                    "<th>Roll Diameter (m)</th>"
+                    "<th>Weight/roll (kg)</th>"
+    
                     "</tr>"
                 )
-                row_num += 1
-            table_html += "</table>"
+                row_num = 1
+                for box in cont_obj["boxes"]:
+                    color = box.get("color", "#FF0000")
+                    color_cell = f"<span style='display:inline-block;width:20px;height:20px;background:{color};'></span>"
+                    table_html += (
+                        "<tr style='border: 1px solid black; text-align: center; background-color: #262730;'>"
+                        f"<td>{color_cell}</td>"
+                        f"<td>{row_num}</td>"
+                        f"<td>{box['spec']}</td>"
+                        f"<td>{box['length']:.2f}</td>"
+                        f"<td>{box['width_mm']:.0f}</td>"
+                        f"<td>{box['rollDiameter']:.2f}</td>"
+                        f"<td>{box['weightPerRoll']:.2f}</td>"
+                        "</tr>"
+                    )
+                    row_num += 1
+                table_html += "</table>"
 
-            if cont_obj["boxes"]:
-                min_z = min(box["position"][2] for box in cont_obj["boxes"])
-            else:
-                min_z = 0
+                if cont_obj["boxes"]:
+                    min_z = min(box["position"][2] for box in cont_obj["boxes"])
+                else:
+                    min_z = 0
 
-            placed_area = 0.0
-            for box in cont_obj["boxes"]:
-                if abs(box["position"][2] - min_z) < 1e-6:
-                    if box.get("belt_type") == "chevron":
-                        r = box["rollDiameter"] / 2
-                        placed_area += math.pi * r * r
-                    else:
-                        w, h = box.get("placed_dims", (box["belt_width"], box["length"]))
-                        placed_area += w * h
+                placed_area = 0.0
+                for box in cont_obj["boxes"]:
+                    if abs(box["position"][2] - min_z) < 1e-6:
+                        if box.get("belt_type") == "chevron":
+                            r = box["rollDiameter"] / 2
+                            placed_area += math.pi * r * r
+                        else:
+                            w, h = box.get("placed_dims", (box["belt_width"], box["length"]))
+                            placed_area += w * h
 
-            total_area = cont["width"] * cont["length"]
-            free_area = total_area - placed_area
-            percent = (placed_area / total_area * 100) if total_area else 0
+                total_area = cont["width"] * cont["length"]
+                free_area = total_area - placed_area
+                percent = (placed_area / total_area * 100) if total_area else 0
 
-            used_volume = 0.0
-            for box in cont_obj["boxes"]:
-                w, l = box["placed_dims"]
-                h = box["height_3d"]
-                used_volume += w * l * h
+                used_volume = 0.0
+                for box in cont_obj["boxes"]:
+                    w, l = box["placed_dims"]
+                    h = box["height_3d"]
+                    used_volume += w * l * h
 
-            total_volume = cont["width"] * cont["length"] * cont["height"]
-            free_volume = total_volume - used_volume
+                total_volume = cont["width"] * cont["length"] * cont["height"]
+                free_volume = total_volume - used_volume
 
-            vol_html = f"""
-                <div style="background-color:#dddddd; width:100%; border-radius:3px; margin-top:8px;">
-                  <div style="background-color:#0fb812; width:{percent:.1f}%; height:10px; border-radius:3px;"></div>
-                </div>
-                <p style="color:#ffffff; font-size:12px; margin:4px 0 0 0;">
-                    Used Volume: {used_volume:.2f} m³ — {free_volume:.2f} m³ free
-                </p>
-            """
-
-            total_weight = sum(box["weightPerRoll"] for box in cont_obj["boxes"])
-            max_weight = cont["max_load"]
-            weight_pct = (total_weight / max_weight * 100) if max_weight else 0
-
-            weight_bar_html = f"""
-                    <div style="background-color:#dddddd; width:100%; border-radius:3px; margin-top:4px;">
-                      <div style="background-color:#eb7e17; width:{weight_pct:.1f}%; height:10px; border-radius:3px;"></div>
+                vol_html = f"""
+                    <div style="background-color:#dddddd; width:100%; border-radius:3px; margin-top:8px;">
+                      <div style="background-color:#0fb812; width:{percent:.1f}%; height:10px; border-radius:3px;"></div>
                     </div>
                     <p style="color:#ffffff; font-size:12px; margin:4px 0 0 0;">
-                        Weight used: {weight_pct:.1f} % ({total_weight:.0f} kg of {max_weight:.0f} kg)
+                        Used Volume: {used_volume:.2f} m³ — {free_volume:.2f} m³ free
                     </p>
-                    """
+                """
 
-            st.markdown(table_html, unsafe_allow_html=True)
-            st.markdown(vol_html, unsafe_allow_html=True)
-            st.markdown(weight_bar_html, unsafe_allow_html=True)
+                total_weight = sum(box["weightPerRoll"] for box in cont_obj["boxes"])
+                max_weight = cont["max_load"]
+                weight_pct = (total_weight / max_weight * 100) if max_weight else 0
 
-        with tab2:
-            if sideview_images and len(sideview_images) >= container_num:
-                st.image(sideview_images[container_num - 1], use_container_width=True, caption="RIGHT SIDE")
+                weight_bar_html = f"""
+                        <div style="background-color:#dddddd; width:100%; border-radius:3px; margin-top:4px;">
+                          <div style="background-color:#eb7e17; width:{weight_pct:.1f}%; height:10px; border-radius:3px;"></div>
+                        </div>
+                        <p style="color:#ffffff; font-size:12px; margin:4px 0 0 0;">
+                            Weight used: {weight_pct:.1f} % ({total_weight:.0f} kg of {max_weight:.0f} kg)
+                        </p>
+                        """
+
+                st.markdown(table_html, unsafe_allow_html=True)
+                st.markdown(vol_html, unsafe_allow_html=True)
+                st.markdown(weight_bar_html, unsafe_allow_html=True)
+
+            with tab2:
+                if sideview_images and len(sideview_images) >= container_num:
+                    st.image(sideview_images[container_num - 1], use_container_width=True, caption="RIGHT SIDE")
 
 
-def get_pdf_image(source, width, max_height=None):
+    def get_pdf_image(source, width, max_height=None):
 
-    if isinstance(source, str):
-        img = RLImage(source)
-    elif isinstance(source, bytes):
-        buf = io.BytesIO(source)
-        img = RLImage(buf)
-    elif hasattr(source, "save"):
-        buf = io.BytesIO()
-        source.save(buf, format="PNG")
-        buf.seek(0)
-        img = RLImage(buf)
-    else:
-        return Paragraph("No picture", getSampleStyleSheet()['BodyText'])
-
-    orig_w, orig_h = img.imageWidth, img.imageHeight
-    scale_w = width / orig_w if orig_w else 1
-    new_h = orig_h * scale_w
-    if max_height is None:
-        img.drawWidth = width
-        img.drawHeight = new_h
-    else:
-        if new_h > max_height:
-            scale_h = max_height / orig_h if orig_h else 1
-            img.drawWidth = orig_w * scale_h
-            img.drawHeight = max_height
+        if isinstance(source, str):
+            img = RLImage(source)
+        elif isinstance(source, bytes):
+            buf = io.BytesIO(source)
+            img = RLImage(buf)
+        elif hasattr(source, "save"):
+            buf = io.BytesIO()
+            source.save(buf, format="PNG")
+            buf.seek(0)
+            img = RLImage(buf)
         else:
+            return Paragraph("No picture", getSampleStyleSheet()['BodyText'])
+
+        orig_w, orig_h = img.imageWidth, img.imageHeight
+        scale_w = width / orig_w if orig_w else 1
+        new_h = orig_h * scale_w
+        if max_height is None:
             img.drawWidth = width
             img.drawHeight = new_h
-    img.hAlign = 'CENTER'
-    return img
+        else:
+            if new_h > max_height:
+                scale_h = max_height / orig_h if orig_h else 1
+                img.drawWidth = orig_w * scale_h
+                img.drawHeight = max_height
+            else:
+                img.drawWidth = width
+                img.drawHeight = new_h
+        img.hAlign = 'CENTER'
+        return img
 
 
-def belts_to_rejected_df(belts, selected_columns):
-    data = []
-    for belt in belts:
-        filtered = {col: belt.get(col, "") for col in selected_columns}
-        data.append(filtered)
-    return pd.DataFrame(data)
+    def belts_to_rejected_df(belts, selected_columns):
+        data = []
+        for belt in belts:
+            filtered = {col: belt.get(col, "") for col in selected_columns}
+            data.append(filtered)
+        return pd.DataFrame(data)
 
 
-columns_to_show = ["spec", "length", "belt_width", "rollDiameter", "weightPerRoll", ]
-column_names_mapping = {"spec": "Specification", "length": "Length (m)", "belt_width": "Belt width (m)",
-                        "rollDiameter": "Roll Diameter (m)", "weightPerRoll": "Weight per Roll (kg)"}
+    columns_to_show = ["spec", "length", "belt_width", "rollDiameter", "weightPerRoll", ]
+    column_names_mapping = {"spec": "Specification", "length": "Length (m)", "belt_width": "Belt width (m)",
+                            "rollDiameter": "Roll Diameter (m)", "weightPerRoll": "Weight per Roll (kg)"}
 
 
-# PDF-Generierung
+    # PDF-Generierung
 
-def create_color_box(color_hex, size=6):
-    d = Drawing(size, size)
-    rect = Rect(0, 0, size, size, rx=2, ry=2,
-                fillColor=colors.HexColor(color_hex),
-                strokeColor=colors.HexColor(color_hex))
-    d.add(rect)
-    return d
+    def create_color_box(color_hex, size=6):
+        d = Drawing(size, size)
+        rect = Rect(0, 0, size, size, rx=2, ry=2,
+                    fillColor=colors.HexColor(color_hex),
+                    strokeColor=colors.HexColor(color_hex))
+        d.add(rect)
+        return d
 
-def generate_pdf(
-    containers,
-    topview_images,
-    sideview_images,
-    order_num=None,
-    current_date=None,
-    sender=None,
-    receiver=None
-):
-    buffer = io.BytesIO()
-    doc = SimpleDocTemplate(
-        buffer,
-        pagesize=landscape(A4),
-        rightMargin=30,
-        leftMargin=30,
-        topMargin=30,
-        bottomMargin=0,
-    )
-    styles = getSampleStyleSheet()
+    def generate_pdf(
+        containers,
+        topview_images,
+        sideview_images,
+        order_num=None,
+        current_date=None,
+        sender=None,
+        receiver=None
+    ):
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(
+            buffer,
+            pagesize=landscape(A4),
+            rightMargin=30,
+            leftMargin=30,
+            topMargin=30,
+            bottomMargin=0,
+        )
+        styles = getSampleStyleSheet()
 
-    # Styles definieren
-    info_style = ParagraphStyle(
-        'InfoStyle', parent=styles['Normal'],
-        fontSize=8, leading=10, alignment=TA_LEFT, leftIndent=0,
-        textColor=colors.HexColor('#4a4a4a')
-    )
-    title_style = ParagraphStyle(
-        'ContainerTitle', parent=styles['Title'],
-        fontSize=24, leading=28, alignment=TA_LEFT
-    )
-    door_style = ParagraphStyle(
-        'DoorLabel', parent=styles['Normal'],
-        fontSize=10, leading=12, alignment=1
-    )
+        # Styles definieren
+        info_style = ParagraphStyle(
+            'InfoStyle', parent=styles['Normal'],
+            fontSize=8, leading=10, alignment=TA_LEFT, leftIndent=0,
+            textColor=colors.HexColor('#4a4a4a')
+        )
+        title_style = ParagraphStyle(
+            'ContainerTitle', parent=styles['Title'],
+            fontSize=24, leading=28, alignment=TA_LEFT
+        )
+        door_style = ParagraphStyle(
+            'DoorLabel', parent=styles['Normal'],
+            fontSize=10, leading=12, alignment=1
+        )
 
-    # Tabellenstile
-    table_header_style = TableStyle([
-        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#34495e')),
-        ('TEXTCOLOR', (0,0), (-1,0), colors.white),
-        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0,0), (-1,0), 8),
-        ('ALIGN', (0,0), (-1,0), 'LEFT'),
-        ('TOPPADDING', (0,0), (-1,0), 4),
-        ('BOTTOMPADDING', (0,0), (-1,0), 3),
-    ])
-
-    table_body_style = TableStyle([
-        ('FONTNAME', (0,1), (-1,-1), 'Helvetica'),
-        ('FONTSIZE', (0,1), (-1,-1), 7),
-        ('ALIGN', (0,1), (-1,-1), 'CENTER'),
-        ('VALIGN', (0,1), (-1,-1), 'MIDDLE'),
-        ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.HexColor('#f7f7f7'), colors.white]),
-        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#dddddd')),
-        ('TOPPADDING', (0,1), (-1,-1), 3),
-        ('BOTTOMPADDING', (0,1), (-1,-1), 1),
-        ('LEFTPADDING', (0,1), (-1,-1), 6),
-        ('RIGHTPADDING', (0,1), (-1,-1), 6),
-    ])
-
-    story = []
-    page_w, page_h = landscape(A4)
-    avail_w = page_w - doc.leftMargin - doc.rightMargin
-    avail_h = page_h - doc.topMargin - doc.bottomMargin
-    img_w = 135
-
-    for cont in containers:
-        num = cont.get('id', 1)
-
-        # Header
-        hdr_para = Paragraph(f"LOADING PLAN - CONTAINER {num}", title_style)
-        logo = get_pdf_image('static/Vasco Logo+claim fin.jpg', width=150, max_height=150)
-        hdr_tbl = Table([[hdr_para, logo]], colWidths=[avail_w*0.67, avail_w*0.3], hAlign='LEFT')
-        hdr_tbl.setStyle(TableStyle([
-            ('VALIGN',(0,0),(-1,-1),'TOP'),
-            ('ALIGN',(1,0),(1,0),'RIGHT'),
-            ('LEFTPADDING',(0,0),(-1,-1),0),
-            ('RIGHTPADDING',(0,0),(-1,-1),0),
-            ('TOPPADDING',(0,0),(-1,-1),4),
-            ('BOTTOMPADDING',(0,0),(-1,-1),3),
-        ]))
-        story.extend([hdr_tbl, Spacer(1,6)])
-
-        # Info-Zeile
-        info_cells = [[
-            Paragraph(f"Order-Number: {order_num or 'N/A'}", info_style),
-            Paragraph(f"Date: {current_date or 'N/A'}", info_style),
-            Paragraph(f"Sender: {sender or 'N/A'}", info_style),
-            Paragraph(f"Receiver: {receiver or 'N/A'}", info_style),
-        ]]
-        first_col_w = avail_w * 0.67
-        info_tbl = Table(info_cells, colWidths=[first_col_w/4]*4, hAlign='LEFT')
-        info_tbl.setStyle(TableStyle([
-            ('ALIGN',(0,0),(-1,-1),'LEFT'),
-            ('VALIGN',(0,0),(-1,-1),'MIDDLE'),
-            ('LEFTPADDING',(0,0),(-1,-1),0),
-            ('RIGHTPADDING',(0,0),(-1,-1),0),
-            ('TOPPADDING',(0,0),(-1,-1),2),
-            ('BOTTOMPADDING',(0,0),(-1,-1),2),
-        ]))
-        story.extend([info_tbl, Spacer(1,12)])
-
-        # Ansichten vorbereiten
-        tv_flow = Spacer(1,0)
-        if topview_images and len(topview_images) >= num:
-            tv_img = get_pdf_image(topview_images[num-1], width=img_w, max_height=avail_h*0.58)
-            tv_lbl = Paragraph("Door", door_style)
-            tv_flow = Table([[tv_img],[tv_lbl]], colWidths=[img_w])
-            tv_flow.setStyle(TableStyle([('ALIGN',(0,0),(-1,-1),'CENTER')]))
-
-        sv_flow = Spacer(1,0)
-        if sideview_images and len(sideview_images) >= num:
-            sv_img = get_pdf_image(sideview_images[num-1], width=img_w, max_height=avail_h*0.2)
-            sv_lbl = Paragraph("Door  < >  Back", door_style)
-            sv_flow = Table([[sv_img],[sv_lbl]], colWidths=[img_w])
-            sv_flow.setStyle(TableStyle([('ALIGN',(0,0),(-1,-1),'CENTER')]))
-
-        left_col = Table([[tv_flow], [sv_flow]], colWidths=[img_w])
-        left_col.setStyle(TableStyle([
-            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-            ('LEFTPADDING', (0, 0), (-1, -1), 0),
-            ('RIGHTPADDING', (0, 0), (-1, -1), 0),
-            ('TOPPADDING', (0, 0), (0, 0), 0),
-            ('BOTTOMPADDING', (0, 0), (0, 0), 0),
-            # Trennlinie unter dem Topview (erste Zeile)
-            ('LINEBELOW', (0, 0), (-1, 0), 0.5, colors.HexColor('#cccccc')),
-        ]))
-
-        # Gürtel-Tabelle
-        headers = ["Color","Nr.","Spec","Length (m)","Width (mm)","Roll Diameter (m)","Weight/roll (kg)"]
-        data = [headers] + [[
-            create_color_box(b.get('color','#FF0000')),
-            i,
-            b.get('spec',''),
-            f"{b.get('length',0):.2f}",
-            f"{b.get('width_mm',0):.0f}",
-            f"{b.get('rollDiameter',0):.2f}",
-            f"{b.get('weightPerRoll',0):.2f}"
-        ] for i,b in enumerate(cont.get('boxes',[]), start=1)]
-        box_tbl = Table(data, colWidths=[18 if idx==1 else None for idx in range(len(headers))])
-        box_tbl.setStyle(table_header_style)
-        box_tbl.setStyle(table_body_style)
-
-        layout = Table([[left_col, box_tbl]], colWidths=[img_w, None])
-        layout.setStyle(TableStyle([
-            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-            ('LEFTPADDING', (1, 0), (1, 0), 6 * mm),
-            ('TOPPADDING', (0, 0), (-1, -1), 0),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
-        ]))
-        story.append(layout)
-
-        # Disclaimer & PageBreak
-        story.extend([
-            Spacer(1,12),
-            Paragraph(
-                "Disclaimer: This Loading Plan is a recommendation. Vasco Global is not liable for the final loading of the container.",
-                info_style
-            ),
-            PageBreak()
+        # Tabellenstile
+        table_header_style = TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#34495e')),
+            ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0,0), (-1,0), 8),
+            ('ALIGN', (0,0), (-1,0), 'LEFT'),
+            ('TOPPADDING', (0,0), (-1,0), 4),
+            ('BOTTOMPADDING', (0,0), (-1,0), 3),
         ])
 
-    doc.build(story)
-    pdf = buffer.getvalue()
-    buffer.close()
-    return pdf
+        table_body_style = TableStyle([
+            ('FONTNAME', (0,1), (-1,-1), 'Helvetica'),
+            ('FONTSIZE', (0,1), (-1,-1), 7),
+            ('ALIGN', (0,1), (-1,-1), 'CENTER'),
+            ('VALIGN', (0,1), (-1,-1), 'MIDDLE'),
+            ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.HexColor('#f7f7f7'), colors.white]),
+            ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#dddddd')),
+            ('TOPPADDING', (0,1), (-1,-1), 3),
+            ('BOTTOMPADDING', (0,1), (-1,-1), 1),
+            ('LEFTPADDING', (0,1), (-1,-1), 6),
+            ('RIGHTPADDING', (0,1), (-1,-1), 6),
+        ])
+
+        story = []
+        page_w, page_h = landscape(A4)
+        avail_w = page_w - doc.leftMargin - doc.rightMargin
+        avail_h = page_h - doc.topMargin - doc.bottomMargin
+        img_w = 135
+
+        for cont in containers:
+            num = cont.get('id', 1)
+
+            # Header
+            hdr_para = Paragraph(f"LOADING PLAN - CONTAINER {num}", title_style)
+            logo = get_pdf_image('static/Vasco Logo+claim fin.jpg', width=150, max_height=150)
+            hdr_tbl = Table([[hdr_para, logo]], colWidths=[avail_w*0.67, avail_w*0.3], hAlign='LEFT')
+            hdr_tbl.setStyle(TableStyle([
+                ('VALIGN',(0,0),(-1,-1),'TOP'),
+                ('ALIGN',(1,0),(1,0),'RIGHT'),
+                ('LEFTPADDING',(0,0),(-1,-1),0),
+                ('RIGHTPADDING',(0,0),(-1,-1),0),
+                ('TOPPADDING',(0,0),(-1,-1),4),
+                ('BOTTOMPADDING',(0,0),(-1,-1),3),
+            ]))
+            story.extend([hdr_tbl, Spacer(1,6)])
+
+            # Info-Zeile
+            info_cells = [[
+                Paragraph(f"Order-Number: {order_num or 'N/A'}", info_style),
+                Paragraph(f"Date: {current_date or 'N/A'}", info_style),
+                Paragraph(f"Sender: {sender or 'N/A'}", info_style),
+                Paragraph(f"Receiver: {receiver or 'N/A'}", info_style),
+            ]]
+            first_col_w = avail_w * 0.67
+            info_tbl = Table(info_cells, colWidths=[first_col_w/4]*4, hAlign='LEFT')
+            info_tbl.setStyle(TableStyle([
+                ('ALIGN',(0,0),(-1,-1),'LEFT'),
+                ('VALIGN',(0,0),(-1,-1),'MIDDLE'),
+                ('LEFTPADDING',(0,0),(-1,-1),0),
+                ('RIGHTPADDING',(0,0),(-1,-1),0),
+                ('TOPPADDING',(0,0),(-1,-1),2),
+                ('BOTTOMPADDING',(0,0),(-1,-1),2),
+            ]))
+            story.extend([info_tbl, Spacer(1,12)])
+
+            # Ansichten vorbereiten
+            tv_flow = Spacer(1,0)
+            if topview_images and len(topview_images) >= num:
+                tv_img = get_pdf_image(topview_images[num-1], width=img_w, max_height=avail_h*0.58)
+                tv_lbl = Paragraph("Door", door_style)
+                tv_flow = Table([[tv_img],[tv_lbl]], colWidths=[img_w])
+                tv_flow.setStyle(TableStyle([('ALIGN',(0,0),(-1,-1),'CENTER')]))
+
+            sv_flow = Spacer(1,0)
+            if sideview_images and len(sideview_images) >= num:
+                sv_img = get_pdf_image(sideview_images[num-1], width=img_w, max_height=avail_h*0.2)
+                sv_lbl = Paragraph("Door  < >  Back", door_style)
+                sv_flow = Table([[sv_img],[sv_lbl]], colWidths=[img_w])
+                sv_flow.setStyle(TableStyle([('ALIGN',(0,0),(-1,-1),'CENTER')]))
+
+            left_col = Table([[tv_flow], [sv_flow]], colWidths=[img_w])
+            left_col.setStyle(TableStyle([
+                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                ('LEFTPADDING', (0, 0), (-1, -1), 0),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+                ('TOPPADDING', (0, 0), (0, 0), 0),
+                ('BOTTOMPADDING', (0, 0), (0, 0), 0),
+                # Trennlinie unter dem Topview (erste Zeile)
+                ('LINEBELOW', (0, 0), (-1, 0), 0.5, colors.HexColor('#cccccc')),
+            ]))
+
+            # Gürtel-Tabelle
+            headers = ["Color","Nr.","Spec","Length (m)","Width (mm)","Roll Diameter (m)","Weight/roll (kg)"]
+            data = [headers] + [[
+                create_color_box(b.get('color','#FF0000')),
+                i,
+                b.get('spec',''),
+                f"{b.get('length',0):.2f}",
+                f"{b.get('width_mm',0):.0f}",
+                f"{b.get('rollDiameter',0):.2f}",
+                f"{b.get('weightPerRoll',0):.2f}"
+            ] for i,b in enumerate(cont.get('boxes',[]), start=1)]
+            box_tbl = Table(data, colWidths=[18 if idx==1 else None for idx in range(len(headers))])
+            box_tbl.setStyle(table_header_style)
+            box_tbl.setStyle(table_body_style)
+
+            layout = Table([[left_col, box_tbl]], colWidths=[img_w, None])
+            layout.setStyle(TableStyle([
+                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                ('LEFTPADDING', (1, 0), (1, 0), 6 * mm),
+                ('TOPPADDING', (0, 0), (-1, -1), 0),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
+            ]))
+            story.append(layout)
+
+            # Disclaimer & PageBreak
+            story.extend([
+                Spacer(1,12),
+                Paragraph(
+                    "Disclaimer: This Loading Plan is a recommendation. Vasco Global is not liable for the final loading of the container.",
+                    info_style
+                ),
+                PageBreak()
+            ])
+
+        doc.build(story)
+        pdf = buffer.getvalue()
+        buffer.close()
+        return pdf
 
 
-pdf_data = generate_pdf(containers, topview_images,sideview_images, st.session_state.order_num, st.session_state.current_date,
-                        st.session_state.sender, st.session_state.receiver)
-st.download_button(label="Download PDF", data=pdf_data, file_name="containers.pdf", mime="application/pdf")
+    pdf_data = generate_pdf(containers, topview_images,sideview_images, st.session_state.order_num, st.session_state.current_date,
+                            st.session_state.sender, st.session_state.receiver)
+    st.download_button(label="Download PDF", data=pdf_data, file_name="containers.pdf", mime="application/pdf")
 
-st.divider()
-st.subheader("Rejected Belts")
-df_rejected = belts_to_rejected_df(st.session_state.get("rejected_belts", []), columns_to_show)
-df_rejected = df_rejected.rename(columns=column_names_mapping)
-st.dataframe(df_rejected)
+    st.divider()
+    st.subheader("Rejected Belts")
+    df_rejected = belts_to_rejected_df(st.session_state.get("rejected_belts", []), columns_to_show)
+    df_rejected = df_rejected.rename(columns=column_names_mapping)
+    st.dataframe(df_rejected)
+
+elif auth_status is False:
+    st.error("Username/Password wrong")
+elif auth_status is None:
+    st.warning("Please login")
