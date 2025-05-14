@@ -3,7 +3,7 @@ credentials:
     # User 1
     user1:
       name: "user"
-      password: "vasco#2925"
+      password: "Vasco2025"
 cookie:
   name: "streamlit_auth_cookie"
   key: "SOME_RANDOMLY_GENERATED_KEY"
