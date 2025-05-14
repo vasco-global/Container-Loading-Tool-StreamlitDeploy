@@ -894,6 +894,7 @@ def get_threejs_html_all(containers, container_dims, scale=100):
                      color: white;
                      background: rgb(14, 17, 23);
                      border-radius: 5px;
+                     max-width: 50%
                      position: absolute; 
                      top: 10px; 
                      left: 10px; 
@@ -2339,10 +2340,6 @@ if auth_status:
             st.info("No belts added yet.")
     st.divider()
     st.subheader("Container Preview")
-
-    if st.button("Vorschau neu laden"):
-        st.session_state["topview_refresh_counter"] += 1
-        st.rerun()
 
     for cont_obj in containers:
         container_num = cont_obj["id"]
