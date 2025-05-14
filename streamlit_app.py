@@ -1,6 +1,6 @@
 import base64
-from datetime import date
 import time
+from datetime import date
 
 import streamlit as st
 import pandas as pd
@@ -894,8 +894,8 @@ def get_threejs_html_all(containers, container_dims, scale=100):
                      color: white;
                      background: rgb(14, 17, 23);
                      border-radius: 5px;
-                     max-width: 50%
                      position: absolute; 
+                     max-width: 50%;
                      top: 10px; 
                      left: 10px; 
                      z-index: 200; 
