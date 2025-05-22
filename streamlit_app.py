@@ -1,7 +1,6 @@
 import base64
 import time
 from datetime import date
-
 import streamlit as st
 import pandas as pd
 import math
@@ -378,16 +377,22 @@ def init_container(container):
         "used_weight": 0.0
     }
 
-
 def choose_placement(free_rectangles, item):
+    # Guillotine-First-Fit: wir durchlaufen alle free_rectangles
+    # und wählen den kleinsten, in den das Item passt
+    best = None
+    best_area = None
     for rect in free_rectangles:
         if item["width"] <= rect["width"] and item["height"] <= rect["height"]:
-            return rect
-    return None
-
+            area = rect["width"] * rect["height"]
+            if best is None or area < best_area:
+                best = rect
+                best_area = area
+    return best  # None, falls kein Rechteck passt
 
 def split_free_rect(free_rect, placed):
     new_rects = []
+    # vertikale Guillotine-Schnittkante
     if free_rect["width"] - placed["width"] > 0:
         new_rects.append({
             "x": free_rect["x"] + placed["width"],
@@ -395,6 +400,7 @@ def split_free_rect(free_rect, placed):
             "width": free_rect["width"] - placed["width"],
             "height": placed["height"]
         })
+    # horizontale Guillotine-Schnittkante
     if free_rect["height"] - placed["height"] > 0:
         new_rects.append({
             "x": free_rect["x"],
@@ -404,34 +410,31 @@ def split_free_rect(free_rect, placed):
         })
     return new_rects
 
-
 def update_free_rectangles(free_rectangles, used_rect):
+    # genau wie vorher, nur mit Guillotine-Split:
     new_free_rects = []
     for rect in free_rectangles:
-        if rect == used_rect:
+        if rect is used_rect:
             new_free_rects.extend(split_free_rect(rect, used_rect["placed"]))
         else:
             new_free_rects.append(rect)
     return new_free_rects
 
-
 belt_buffer = 0.005
-
 
 def rects_intersect(rect1, rect2):
     return not (
-            rect1["x"] + rect1["width"] <= rect2["x"] or
-            rect2["x"] + rect2["width"] <= rect1["x"] or
-            rect1["y"] + rect1["height"] <= rect2["y"] or
-            rect2["y"] + rect2["height"] <= rect1["y"]
+        rect1["x"] + rect1["width"] <= rect2["x"] or
+        rect2["x"] + rect2["width"] <= rect1["x"] or
+        rect1["y"] + rect1["height"] <= rect2["y"] or
+        rect2["y"] + rect2["height"] <= rect1["y"]
     )
-
 
 def subtract_rect(free_rect, used_rect):
     new_rects = []
     ix = max(free_rect["x"], used_rect["x"])
     iy = max(free_rect["y"], used_rect["y"])
-    i_right = min(free_rect["x"] + free_rect["width"], used_rect["x"] + used_rect["width"])
+    i_right  = min(free_rect["x"] + free_rect["width"],  used_rect["x"] + used_rect["width"])
     i_bottom = min(free_rect["y"] + free_rect["height"], used_rect["y"] + used_rect["height"])
 
     if ix >= i_right or iy >= i_bottom:
@@ -444,7 +447,6 @@ def subtract_rect(free_rect, used_rect):
             "width": free_rect["width"],
             "height": iy - free_rect["y"]
         })
-
     if i_bottom < free_rect["y"] + free_rect["height"]:
         new_rects.append({
             "x": free_rect["x"],
@@ -452,7 +454,6 @@ def subtract_rect(free_rect, used_rect):
             "width": free_rect["width"],
             "height": free_rect["y"] + free_rect["height"] - i_bottom
         })
-
     if used_rect["x"] > free_rect["x"]:
         new_rects.append({
             "x": free_rect["x"],
@@ -469,6 +470,7 @@ def subtract_rect(free_rect, used_rect):
             "height": i_bottom - iy
         })
     return new_rects
+
 
 
 def pack_belts_into_containers(belts, container, allow_rotation, forklift_limit):
