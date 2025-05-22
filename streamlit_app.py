@@ -2671,15 +2671,14 @@ if auth_status:
         return pdf
 
 
-    pdf_data = generate_pdf(containers, topview_images, sideview_images, st.session_state.order_num,
-                            st.session_state.current_date,
-                            st.session_state.sender, st.session_state.receiver)
-
     if not st.session_state.order_meta_set:
         if st.button("Generate PDF"):
             st.session_state.order_meta_set = True
             shipping_dialog()
     else:
+        pdf_data = generate_pdf(containers, topview_images, sideview_images, st.session_state.order_num,
+                                st.session_state.current_date,
+                                st.session_state.sender, st.session_state.receiver)
         st.download_button(label="Download PDF", data=pdf_data, file_name="containers.pdf", mime="application/pdf")
 
     st.divider()
