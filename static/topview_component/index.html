@@ -155,7 +155,27 @@
 
             let beltMesh;
 
-            if (box.flat) {
+             if (box.itemType === "object") {
+              const w = dims[0] * scale;
+              const l = dims[1] * scale;
+              const h = box.height_3d * scale;
+          
+              const geo = new THREE.BoxGeometry(w, h, l);
+              const mat = new THREE.MeshBasicMaterial({ color: box.color || 0xff0000 });
+              const mesh = new THREE.Mesh(geo, mat);
+
+              const cx = (pos[0] + dims[0]/2) * scale;
+              const cy = (pos[2] + box.height_3d/2) * scale;
+              const cz = (pos[1] + dims[1]/2) * scale + offsetZ;
+
+              mesh.position.set(cx, cy, cz);
+              group.add(mesh);
+
+              return;
+            }
+
+
+            else if (box.flat) {
               const g = new THREE.CylinderGeometry(
                 (box.rollDiameter / 2) * scale,
                 (box.rollDiameter / 2) * scale,
