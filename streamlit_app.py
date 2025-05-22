@@ -34,6 +34,8 @@ st.set_page_config(layout="wide")
 
 if 'belt_id_counter' not in st.session_state:
     st.session_state['belt_id_counter'] = 0
+if "object_id_counter" not in st.session_state:
+    st.session_state["object_id_counter"] = 0
 if 'needs_reordering' not in st.session_state:
     st.session_state["needs_reordering"] = True
 if 'belts' not in st.session_state:
@@ -546,7 +548,8 @@ def pack_belts_into_containers(belts, container, allow_rotation, forklift_limit)
                 "belts": stck["belts"],
                 "belt_width": stck["base_dims"][0],
                 "width_mm": stck["base_dims"][0] * 1000,
-                "length": stck["base_dims"][1]
+                "length": stck["base_dims"][1],
+                "spec": "Object Stack"
             })
 
         belts_for_packing = non_objects + object_stacks
@@ -796,6 +799,7 @@ def get_threejs_html_all(containers, container_dims, scale=100):
                 cz = (pos[1] + let_length / 2) * scale
                 cy = (pos[2] + let_height / 2) * scale
                 objects_data.append({
+                    "id": box.get("id"),
                     "cx": cx,
                     "cy": cy,
                     "cz": cz,
@@ -821,6 +825,7 @@ def get_threejs_html_all(containers, container_dims, scale=100):
                 else:
                     cy = (pos[2] + box["rollDiameter"] / 2) * scale
                 objects_data.append({
+                    "id": box.get("id"),
                     "cx": cx,
                     "cy": cy,
                     "cz": cz,
@@ -2067,8 +2072,7 @@ if auth_status:
         obj_weight = st.number_input("Weight (kg)", value=100.0, step=1.0, format="%.2f", key="obj_weight")
 
         if st.button("Add object", key="add_object_button"):
-            if 'object_id_counter' not in st.session_state:
-                st.session_state['object_id_counter'] = 0
+
             new_object = {
                 "spec": f"Object {st.session_state['object_id_counter']}",
                 "length": obj_length,
@@ -2188,6 +2192,7 @@ if auth_status:
                         belt["id"] = st.session_state['belt_id_counter']
                         st.session_state['belt_id_counter'] += 1
                         st.session_state.belts.append(belt)
+                        st.session_state['object_id_counter'] = st.session_state['belt_id_counter']
                         containers, rejected_belts = pack_belts_into_containers(st.session_state.belts, cont,
                                                                                 allow_rotation, forklift_limit)
 
