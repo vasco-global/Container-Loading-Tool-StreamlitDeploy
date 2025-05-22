@@ -33,9 +33,7 @@ import yaml
 st.set_page_config(layout="wide")
 
 if 'belt_id_counter' not in st.session_state:
-    st.session_state['belt_id_counter'] = 0
-if "object_id_counter" not in st.session_state:
-    st.session_state["object_id_counter"] = 0
+    st.session_state['belt_id_counter'] = 1
 if 'needs_reordering' not in st.session_state:
     st.session_state["needs_reordering"] = True
 if 'belts' not in st.session_state:
@@ -2074,7 +2072,7 @@ if auth_status:
         if st.button("Add object", key="add_object_button"):
 
             new_object = {
-                "spec": f"Object {st.session_state['object_id_counter']}",
+                "spec": f"Object {st.session_state['belt_id_counter']}",
                 "length": obj_length,
                 "belt_width": obj_width,
                 "width_mm": obj_width * 1000,
@@ -2087,9 +2085,9 @@ if auth_status:
                 "is_box": True,
                 "itemType": "object"
             }
-            counter = st.session_state['object_id_counter']
+            counter = st.session_state['belt_id_counter']
             new_object["id"] = counter
-            st.session_state['object_id_counter'] = counter + 1
+            st.session_state['belt_id_counter'] = counter + 1
 
             st.session_state.belts.append(new_object)
             st.success(f"Object added : {new_object['spec']}")
@@ -2192,7 +2190,6 @@ if auth_status:
                         belt["id"] = st.session_state['belt_id_counter']
                         st.session_state['belt_id_counter'] += 1
                         st.session_state.belts.append(belt)
-                        st.session_state['object_id_counter'] = st.session_state['belt_id_counter']
                         containers, rejected_belts = pack_belts_into_containers(st.session_state.belts, cont,
                                                                                 allow_rotation, forklift_limit)
 
